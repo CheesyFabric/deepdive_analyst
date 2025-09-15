@@ -7,8 +7,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
 from crewai import Agent, Task, Crew
-from langchain_openai import ChatOpenAI
 from src.configs.config import Config, AgentConfig
+from src.llm.llm_factory import LLMFactory
 
 
 @dataclass
@@ -41,11 +41,17 @@ class BaseAgent:
         self.backstory = backstory
         
         # 初始化LLM
-        self.llm = ChatOpenAI(
-            model=Config.LLM_MODEL,
-            temperature=Config.LLM_TEMPERATURE,
-            api_key=Config.OPENAI_API_KEY
-        )
+        try:
+            llm_config = Config.get_llm_config()
+            self.llm_instance = LLMFactory.create_llm(**llm_config)
+            
+            # 为了兼容CrewAI，我们需要创建一个LangChain兼容的LLM对象
+            self.llm = self._create_crewai_compatible_llm()
+            
+            logger.info(f"Agent '{self.name}' LLM初始化成功: {self.llm_instance}")
+        except Exception as e:
+            logger.error(f"Agent '{self.name}' LLM初始化失败: {str(e)}")
+            raise
         
         # 创建CrewAI Agent
         self.agent = Agent(
@@ -58,6 +64,112 @@ class BaseAgent:
         )
         
         logger.info(f"Agent '{self.name}' 初始化成功")
+    
+    def _create_crewai_compatible_llm(self):
+        """
+        创建与CrewAI兼容的LLM对象
+        
+        Returns:
+            CrewAI兼容的LLM对象
+        """
+        llm_config = Config.get_llm_config()
+        provider = llm_config['provider']
+        
+        if provider == 'openai':
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=llm_config['model'],
+                temperature=llm_config['temperature'],
+                api_key=llm_config['api_key'],
+                max_tokens=llm_config.get('max_tokens'),
+                timeout=llm_config.get('timeout'),
+                max_retries=llm_config.get('max_retries')
+            )
+        elif provider == 'anthropic':
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                model=llm_config['model'],
+                temperature=llm_config['temperature'],
+                api_key=llm_config['api_key'],
+                max_tokens=llm_config.get('max_tokens'),
+                timeout=llm_config.get('timeout')
+            )
+        elif provider == 'gemini':
+            # Gemini需要特殊处理，使用CrewAI的LLM类而不是LangChain
+            from crewai import LLM
+            
+            # 保持完整的模型名称格式
+            model_name = llm_config['model']
+            if not model_name.startswith('gemini/'):
+                model_name = f"gemini/{model_name}"
+            
+            logger.info(f"Gemini初始化，模型: {model_name}")
+            return LLM(
+                model=model_name,
+                api_key=llm_config['api_key'],
+                temperature=llm_config['temperature'],
+                max_tokens=llm_config.get('max_tokens')
+            )
+        elif provider == 'qwen':
+            # Qwen需要自定义适配器
+            return self._create_qwen_adapter(llm_config)
+        else:
+            raise ValueError(f"不支持的LLM提供商: {provider}")
+    
+    def _create_qwen_adapter(self, llm_config):
+        """
+        创建Qwen适配器
+        
+        Args:
+            llm_config: LLM配置
+            
+        Returns:
+            Qwen适配器对象
+        """
+        # 这里需要创建一个自定义的适配器来兼容CrewAI
+        # 由于CrewAI可能不直接支持Qwen，我们需要创建一个包装器
+        class QwenAdapter:
+            def __init__(self, config):
+                self.config = config
+                self.llm_instance = LLMFactory.create_llm(**config)
+            
+            def invoke(self, messages, **kwargs):
+                # 将CrewAI的消息格式转换为我们的格式
+                if isinstance(messages, list):
+                    prompt = "\n".join([msg.content for msg in messages if hasattr(msg, 'content')])
+                else:
+                    prompt = str(messages)
+                
+                response = self.llm_instance.generate(prompt)
+                if response.success:
+                    # 创建一个类似LangChain响应的对象
+                    class MockResponse:
+                        def __init__(self, content):
+                            self.content = content
+                            self.usage_metadata = response.usage
+                            self.finish_reason = response.finish_reason
+                    
+                    return MockResponse(response.content)
+                else:
+                    raise Exception(f"Qwen生成失败: {response.error_message}")
+            
+            def stream(self, messages, **kwargs):
+                # 流式生成适配
+                if isinstance(messages, list):
+                    prompt = "\n".join([msg.content for msg in messages if hasattr(msg, 'content')])
+                else:
+                    prompt = str(messages)
+                
+                for chunk in self.llm_instance.generate_stream(prompt):
+                    if chunk.success:
+                        class MockChunk:
+                            def __init__(self, content):
+                                self.content = content
+                        yield MockChunk(chunk.content)
+                    else:
+                        raise Exception(f"Qwen流式生成失败: {chunk.error_message}")
+        
+        return QwenAdapter(llm_config)
     
     def execute_task(self, task_description: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
         """

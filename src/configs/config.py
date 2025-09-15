@@ -16,12 +16,22 @@ class Config:
     
     # API 配置
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    QWEN_API_KEY: str = os.getenv("QWEN_API_KEY", "")
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
     LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
     
-    # LLM 模型配置
+    # LLM 提供商配置
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4000"))
+    LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
+    LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    
+    # LLM 基础URL配置（用于自定义部署）
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     
     # LangSmith 配置
     LANGCHAIN_TRACING_V2: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
@@ -34,6 +44,63 @@ class Config:
     # 报告配置
     DEFAULT_OUTPUT_FILE: str = "report.md"
     MAX_REPORT_LENGTH: int = 10000
+    
+    @classmethod
+    def get_llm_config(cls) -> Dict[str, Any]:
+        """
+        获取LLM配置字典
+        
+        Returns:
+            LLM配置字典
+        """
+        # 根据提供商获取对应的API密钥
+        api_key_map = {
+            'openai': cls.OPENAI_API_KEY,
+            'gemini': cls.GEMINI_API_KEY,
+            'qwen': cls.QWEN_API_KEY,
+            'anthropic': cls.ANTHROPIC_API_KEY
+        }
+        
+        api_key = api_key_map.get(cls.LLM_PROVIDER.lower(), "")
+        
+        config = {
+            'provider': cls.LLM_PROVIDER.lower(),
+            'model': cls.LLM_MODEL,
+            'temperature': cls.LLM_TEMPERATURE,
+            'max_tokens': cls.LLM_MAX_TOKENS,
+            'api_key': api_key,
+            'timeout': cls.LLM_TIMEOUT,
+            'max_retries': cls.LLM_MAX_RETRIES
+        }
+        
+        # 如果设置了基础URL，添加到配置中
+        if cls.LLM_BASE_URL:
+            config['base_url'] = cls.LLM_BASE_URL
+        
+        return config
+    
+    @classmethod
+    def validate_llm_config(cls) -> bool:
+        """
+        验证LLM配置是否完整
+        
+        Returns:
+            配置是否有效
+        """
+        config = cls.get_llm_config()
+        
+        # 检查必需字段
+        required_fields = ['provider', 'model', 'api_key']
+        for field in required_fields:
+            if not config.get(field):
+                return False
+        
+        # 检查提供商是否支持
+        from src.llm.llm_factory import LLMFactory
+        if config['provider'] not in LLMFactory.get_supported_providers():
+            return False
+        
+        return True
 
 
 class AgentConfig:

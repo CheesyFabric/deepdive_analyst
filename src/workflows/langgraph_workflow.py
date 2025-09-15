@@ -7,6 +7,7 @@ from typing import Dict, Any, List, TypedDict, Annotated
 from loguru import logger
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+import os
 from src.agents.base_agents import (
     QueryClassifierAgent,
     ChiefPlannerAgent,
@@ -288,6 +289,11 @@ class LangGraphWorkflow:
         """
         logger.info(f"开始执行LangGraph工作流，查询: {query}")
         
+        # 检查LangSmith配置
+        langsmith_enabled = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+        if langsmith_enabled:
+            logger.info("LangSmith追踪已启用，执行轨迹将发送到LangSmith控制台")
+        
         # 初始化状态
         initial_state = GraphState(
             original_query=query,
@@ -305,18 +311,31 @@ class LangGraphWorkflow:
         )
         
         try:
-            # 执行图
+            # 执行图 - LangGraph会自动与LangSmith集成
             final_state = self.graph.invoke(initial_state)
             
             logger.info("LangGraph工作流执行完成")
-            return {
+            
+            # 构建返回结果
+            result = {
                 "success": final_state.get("success", False),
                 "query": query,
                 "intent": final_state.get("intent", ""),
                 "final_report": final_state.get("final_report", ""),
                 "research_iterations": final_state.get("research_iteration", 0),
-                "error": final_state.get("error_message", "")
+                "error": final_state.get("error_message", ""),
+                "langsmith_enabled": langsmith_enabled
             }
+            
+            # 如果启用了LangSmith，添加追踪信息
+            if langsmith_enabled:
+                result["langsmith_info"] = {
+                    "project": os.getenv("LANGCHAIN_PROJECT", "deepdive-analyst"),
+                    "trace_url": "https://smith.langchain.com/",
+                    "message": "请访问LangSmith控制台查看详细的执行轨迹"
+                }
+            
+            return result
             
         except Exception as e:
             logger.error(f"LangGraph工作流执行失败: {str(e)}")
@@ -324,7 +343,8 @@ class LangGraphWorkflow:
                 "success": False,
                 "query": query,
                 "final_report": "",
-                "error": str(e)
+                "error": str(e),
+                "langsmith_enabled": langsmith_enabled
             }
     
     def get_workflow_summary(self, results: Dict[str, Any]) -> str:

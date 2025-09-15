@@ -83,6 +83,14 @@ def research(
             console.print(f"[blue]📊[/blue] 研究迭代次数: {results.get('research_iterations', 0)}")
             console.print(f"[blue]📊[/blue] 查询意图: {results.get('intent', '未知')}")
             
+            # 显示LangSmith追踪信息
+            if results.get('langsmith_enabled', False):
+                langsmith_info = results.get('langsmith_info', {})
+                console.print(f"[magenta]🔍[/magenta] LangSmith追踪: 已启用")
+                console.print(f"[magenta]📈[/magenta] 项目: {langsmith_info.get('project', 'deepdive-analyst')}")
+                console.print(f"[magenta]🌐[/magenta] 控制台: {langsmith_info.get('trace_url', 'https://smith.langchain.com/')}")
+                console.print(f"[magenta]💡[/magenta] {langsmith_info.get('message', '请访问LangSmith控制台查看详细轨迹')}")
+            
             # 显示工作流摘要
             if verbose:
                 summary = workflow.get_workflow_summary(results)
@@ -123,8 +131,17 @@ def config():
         from src.configs.config import Config
         
         console.print("[bold blue]DeepDive Analyst 配置信息[/bold blue]")
-        console.print(f"[green]✓[/green] LLM模型: {Config.LLM_MODEL}")
-        console.print(f"[green]✓[/green] 模型温度: {Config.LLM_TEMPERATURE}")
+        
+        # LLM配置信息
+        llm_config = Config.get_llm_config()
+        console.print(f"[green]✓[/green] LLM提供商: {llm_config['provider']}")
+        console.print(f"[green]✓[/green] LLM模型: {llm_config['model']}")
+        console.print(f"[green]✓[/green] 模型温度: {llm_config['temperature']}")
+        console.print(f"[green]✓[/green] 最大Token数: {llm_config['max_tokens']}")
+        console.print(f"[green]✓[/green] 超时时间: {llm_config['timeout']}秒")
+        console.print(f"[green]✓[/green] 最大重试次数: {llm_config['max_retries']}")
+        
+        # 其他配置
         console.print(f"[green]✓[/green] 最大搜索结果: {Config.MAX_SEARCH_RESULTS}")
         console.print(f"[green]✓[/green] 搜索超时: {Config.SEARCH_TIMEOUT}秒")
         console.print(f"[green]✓[/green] 默认输出文件: {Config.DEFAULT_OUTPUT_FILE}")
@@ -132,12 +149,26 @@ def config():
         # 检查API密钥状态
         console.print("\n[bold]API密钥状态:[/bold]")
         openai_status = "✅ 已配置" if Config.OPENAI_API_KEY else "❌ 未配置"
+        gemini_status = "✅ 已配置" if Config.GEMINI_API_KEY else "❌ 未配置"
+        qwen_status = "✅ 已配置" if Config.QWEN_API_KEY else "❌ 未配置"
+        anthropic_status = "✅ 已配置" if Config.ANTHROPIC_API_KEY else "❌ 未配置"
         tavily_status = "✅ 已配置" if Config.TAVILY_API_KEY else "❌ 未配置"
         langsmith_status = "✅ 已配置" if Config.LANGCHAIN_API_KEY else "❌ 未配置"
         
         console.print(f"[green]OpenAI API:[/green] {openai_status}")
+        console.print(f"[green]Gemini API:[/green] {gemini_status}")
+        console.print(f"[green]Qwen API:[/green] {qwen_status}")
+        console.print(f"[green]Anthropic API:[/green] {anthropic_status}")
         console.print(f"[green]Tavily API:[/green] {tavily_status}")
         console.print(f"[green]LangSmith API:[/green] {langsmith_status}")
+        
+        # LLM配置验证
+        console.print("\n[bold]LLM配置验证:[/bold]")
+        if Config.validate_llm_config():
+            console.print("[green]✅ LLM配置有效[/green]")
+        else:
+            console.print("[red]❌ LLM配置无效[/red]")
+            console.print("[yellow]💡 请检查LLM_PROVIDER、LLM_MODEL和对应的API密钥配置[/yellow]")
         
     except ImportError as e:
         console.print(f"[red]❌[/red] 配置加载失败: {str(e)}")
@@ -162,6 +193,42 @@ def examples():
     
     console.print("\n[bold]5. 高级选项示例:[/bold]")
     console.print("[green]python main.py research --query \"你的查询\" --max-iterations 5 --verbose --output custom_report.md[/green]")
+
+
+@app.command()
+def llm():
+    """LLM提供商管理"""
+    console.print("[bold blue]🤖 LLM提供商管理[/bold blue]")
+    
+    try:
+        from src.llm.llm_factory import LLMFactory
+        
+        # 显示支持的提供商
+        providers = LLMFactory.get_supported_providers()
+        console.print(f"\n[green]支持的LLM提供商:[/green] {', '.join(providers)}")
+        
+        # 显示每个提供商的详细信息
+        console.print("\n[bold]提供商详细信息:[/bold]")
+        for provider in providers:
+            try:
+                info = LLMFactory.get_provider_info(provider)
+                console.print(f"\n[cyan]{provider.upper()}:[/cyan]")
+                console.print(f"  描述: {info['description']}")
+                console.print(f"  可用模型: {', '.join(info['available_models'][:3])}{'...' if len(info['available_models']) > 3 else ''}")
+            except Exception as e:
+                console.print(f"[red]❌[/red] 获取{provider}信息失败: {str(e)}")
+        
+        # 显示当前配置
+        from src.configs.config import Config
+        llm_config = Config.get_llm_config()
+        console.print(f"\n[bold]当前LLM配置:[/bold]")
+        console.print(f"提供商: {llm_config['provider']}")
+        console.print(f"模型: {llm_config['model']}")
+        console.print(f"API密钥: {'已配置' if llm_config['api_key'] else '未配置'}")
+        
+    except ImportError as e:
+        console.print(f"[red]❌[/red] LLM模块导入失败: {str(e)}")
+        console.print("[yellow]💡[/yellow] 请确保已安装所有LLM依赖")
 
 
 @app.command()
