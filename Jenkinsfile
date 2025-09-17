@@ -57,7 +57,8 @@ pipeline {
             steps {
                 echo "🔍 代码质量检查..."
                 sh '''
-                    source venv/bin/activate
+                    #!/bin/bash
+                    . venv/bin/activate
                     
                     # 安装代码检查工具
                     pip install flake8 black
@@ -77,7 +78,8 @@ pipeline {
             steps {
                 echo "🧪 运行测试..."
                 sh '''
-                    source venv/bin/activate
+                    #!/bin/bash
+                    . venv/bin/activate
                     
                     # 设置测试环境变量
                     export LLM_PROVIDER=openai
