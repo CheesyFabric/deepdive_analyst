@@ -39,7 +39,7 @@ pipeline {
         // 阶段 3: 安装依赖
         stage('📦 Install Dependencies') {
             steps {
-                echo "📦 安装依赖..."
+                echo "📦 安装依赖......"
                 sh '''
                     python3 -m venv venv
                     source venv/bin/activate
