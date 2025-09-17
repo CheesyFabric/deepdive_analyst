@@ -10,7 +10,7 @@ from src.workflows.langgraph_workflow import LangGraphWorkflow, GraphState
 class TestLangGraphWorkflow:
     """LangGraph工作流测试"""
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_init(self, mock_llm):
         """测试工作流初始化"""
         workflow = LangGraphWorkflow()
@@ -21,7 +21,7 @@ class TestLangGraphWorkflow:
         assert workflow.writer is not None
         assert workflow.graph is not None
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_classify_node(self, mock_llm):
         """测试分类节点"""
         workflow = LangGraphWorkflow()
@@ -49,7 +49,7 @@ class TestLangGraphWorkflow:
         assert result_state["intent"] == "deep_dive"
         assert result_state["success"] is True
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_plan_node(self, mock_llm):
         """测试规划节点"""
         workflow = LangGraphWorkflow()
@@ -80,7 +80,7 @@ class TestLangGraphWorkflow:
         assert result_state["plan"] == "Test plan"
         assert result_state["success"] is True
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_research_node(self, mock_llm):
         """测试研究节点"""
         workflow = LangGraphWorkflow()
@@ -112,7 +112,7 @@ class TestLangGraphWorkflow:
         assert result_state["research_iteration"] == 1
         assert result_state["success"] is True
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_critique_node(self, mock_llm):
         """测试批判节点"""
         workflow = LangGraphWorkflow()
@@ -145,7 +145,7 @@ class TestLangGraphWorkflow:
         assert result_state["needs_more_research"] is False
         assert result_state["success"] is True
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_write_report_node(self, mock_llm):
         """测试报告撰写节点"""
         workflow = LangGraphWorkflow()
@@ -173,7 +173,7 @@ class TestLangGraphWorkflow:
         assert result_state["final_report"] == "Test report"
         assert result_state["success"] is True
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_should_continue_logic(self, mock_llm):
         """测试是否继续的逻辑"""
         workflow = LangGraphWorkflow()
@@ -235,7 +235,7 @@ class TestLangGraphWorkflow:
         result = workflow._should_continue(state_max_iter)
         assert result == "finish"
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_extract_search_queries(self, mock_llm):
         """测试搜索查询提取"""
         workflow = LangGraphWorkflow()
@@ -252,7 +252,7 @@ class TestLangGraphWorkflow:
         assert len(queries) > 0
         assert "Python编程" in queries or "最佳实践" in queries
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_get_workflow_summary(self, mock_llm):
         """测试工作流摘要生成"""
         workflow = LangGraphWorkflow()

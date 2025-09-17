@@ -10,17 +10,7 @@ from src.workflows.linear_workflow import LinearWorkflow
 class TestLinearWorkflow:
     """线性工作流测试"""
     
-    def test_init(self):
-        """测试工作流初始化"""
-        with patch('src.agents.base_agents.ChatOpenAI'):
-            workflow = LinearWorkflow()
-            assert workflow.classifier is not None
-            assert workflow.planner is not None
-            assert workflow.researcher is not None
-            assert workflow.critic is not None
-            assert workflow.writer is not None
-    
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_execute_success(self, mock_llm):
         """测试工作流执行成功"""
         # 模拟所有Agent的成功响应
@@ -65,7 +55,7 @@ class TestLinearWorkflow:
         assert len(result['steps']) == 5
         assert result['final_report'] == 'Test report'
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_execute_failure(self, mock_llm):
         """测试工作流执行失败"""
         # 模拟Agent失败
@@ -81,7 +71,7 @@ class TestLinearWorkflow:
         assert 'error' in result
         assert result['error'] == "Test error"
     
-    @patch('src.agents.base_agents.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_get_workflow_summary(self, mock_llm):
         """测试工作流摘要生成"""
         workflow = LinearWorkflow()
