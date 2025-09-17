@@ -42,8 +42,10 @@ pipeline {
                 echo "📦 安装依赖......"
                 sh '''
                     #!/bin/bash
+                    set -xe
+
                     python3 -m venv venv
-                    source venv/bin/activate
+                    . venv/bin/activate
                     pip install --upgrade pip
                     pip install -r requirements.txt
                 '''
