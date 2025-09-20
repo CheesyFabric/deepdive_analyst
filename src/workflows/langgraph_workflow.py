@@ -255,26 +255,185 @@ class LangGraphWorkflow:
             return "finish"
     
     def _extract_search_queries(self, plan: str) -> List[str]:
-        """从研究计划中提取搜索查询（简单实现）"""
-        # 这里是一个简单的实现，实际应用中可能需要更复杂的NLP处理
+        """从研究计划中提取搜索查询（智能版）"""
+        import re
+        
         queries = []
         
-        # 查找包含"搜索"、"查询"等关键词的句子
+        # 方法1: 使用LLM智能提取（推荐）
+        try:
+            # 构建提取提示
+            extract_prompt = f"""
+请从以下研究计划中提取5个最重要的搜索查询词，用于进行技术调研。
+
+研究计划内容：
+{plan}
+
+要求：
+1. 提取最核心的技术术语和概念
+2. 优先提取具体的产品名称（如CrewAI、Autogen）
+3. 包含相关的技术概念（如多智能体、协作机制等）
+4. 每个查询词应该是独立的、可搜索的
+5. 返回格式：每行一个查询词
+
+请直接返回查询词，不要添加其他说明：
+"""
+            
+            # 使用分类器LLM进行智能提取
+            if hasattr(self, 'classifier') and self.classifier and hasattr(self.classifier, 'llm'):
+                try:
+                    response = None
+                    
+                    # 尝试不同的调用方法
+                    if hasattr(self.classifier.llm, 'invoke'):
+                        # LangChain 风格的调用
+                        response = self.classifier.llm.invoke(extract_prompt)
+                        logger.info("使用 invoke 方法调用LLM")
+                    elif hasattr(self.classifier.llm, 'call'):
+                        # CrewAI 风格的调用
+                        response = self.classifier.llm.call(extract_prompt)
+                        logger.info("使用 call 方法调用LLM")
+                    elif hasattr(self.classifier.llm, 'generate'):
+                        # 其他可能的调用方法
+                        response = self.classifier.llm.generate([extract_prompt])
+                        logger.info("使用 generate 方法调用LLM")
+                    elif hasattr(self.classifier.llm, 'predict'):
+                        # 预测方法
+                        response = self.classifier.llm.predict(extract_prompt)
+                        logger.info("使用 predict 方法调用LLM")
+                    else:
+                        logger.warning(f"LLM对象没有可用的调用方法，可用方法: {dir(self.classifier.llm)}")
+                        raise AttributeError("LLM对象没有可用的调用方法")
+                    
+                    if response is not None:
+                        # 处理不同类型的响应
+                        response_text = ""
+                        
+                        if hasattr(response, 'content'):
+                            response_text = response.content
+                        elif hasattr(response, 'text'):
+                            response_text = response.text
+                        elif hasattr(response, 'generations') and response.generations:
+                            # 处理 generate 方法的响应
+                            response_text = response.generations[0][0].text
+                        elif isinstance(response, str):
+                            response_text = response
+                        else:
+                            response_text = str(response)
+                        
+                        llm_queries = response_text.strip().split('\n')
+                        
+                        # 清理LLM返回的查询
+                        for query in llm_queries:
+                            query = query.strip()
+                            # 移除编号和多余符号
+                            query = re.sub(r'^\d+[\.\)]\s*', '', query)
+                            query = re.sub(r'^[-*]\s*', '', query)
+                            query = query.strip()
+                            
+                            if query and len(query) > 2:
+                                queries.append(query)
+                        
+                        if queries:
+                            logger.info(f"LLM智能提取到搜索查询: {queries}")
+                            return queries[:5]
+                        else:
+                            logger.warning("LLM返回的查询为空")
+                    else:
+                        logger.warning("LLM调用返回None")
+                        
+                except Exception as e:
+                    logger.warning(f"LLM提取失败: {e}")
+                    # 如果LLM提取失败，使用默认查询
+                    queries = ["CrewAI", "Autogen", "多智能体协作", "Multi-agent system", "技术对比"]
+                    logger.info(f"使用默认查询: {queries}")
+                    return queries[:5]
+            else:
+                logger.warning("分类器或LLM不可用")
+                # 如果分类器不可用，使用默认查询
+                queries = ["CrewAI", "Autogen", "多智能体协作", "Multi-agent system", "技术对比"]
+                logger.info(f"使用默认查询: {queries}")
+                return queries[:5]
+        
+        except Exception as e:
+            logger.warning(f"LLM提取异常: {e}")
+            # 如果出现异常，使用默认查询
+            queries = ["CrewAI", "Autogen", "多智能体协作", "Multi-agent system", "技术对比"]
+            logger.info(f"使用默认查询: {queries}")
+            return queries[:5]
+        
+        # 方法2: 基于结构的智能解析（备用）
+        # queries = self._parse_structured_content(plan)
+        # if queries:
+        #     logger.info(f"结构化解析提取到搜索查询: {queries}")
+        #     return queries[:5]
+        
+        return queries[:5]
+    
+    def _parse_structured_content(self, plan: str) -> List[str]:
+        """基于内容结构的智能解析"""
+        import re
+        
+        queries = []
+        
+        # 查找关键搜索词列表部分
         lines = plan.split('\n')
-        for line in lines:
+        in_keyword_section = False
+        
+        for i, line in enumerate(lines):
             line = line.strip()
-            if any(keyword in line for keyword in ['搜索', '查询', '关键词', 'search', 'query']):
-                # 提取可能的查询词
-                if ':' in line:
-                    query_part = line.split(':', 1)[1].strip()
-                    if query_part:
-                        queries.append(query_part)
+            
+            # 检测关键词列表开始
+            if re.search(r'关键.*?搜索.*?词|搜索.*?词.*?列表|关键词.*?列表', line, re.IGNORECASE):
+                in_keyword_section = True
+                continue
+            
+            # 在关键词部分提取内容
+            if in_keyword_section:
+                # 跳过空行
+                if not line:
+                    continue
+                
+                # 如果遇到新的主要章节，停止提取
+                if re.match(r'\*\*\d+\.|##\s*\d+\.', line):
+                    break
+                
+                # 提取列表项中的内容
+                if line.startswith('*') and ':' in line:
+                    # 处理 * **CrewAI:** 格式
+                    colon_pos = line.find(':')
+                    if colon_pos != -1:
+                        content = line[colon_pos + 1:].strip()
+                        # 清理内容
+                        content = re.sub(r'^\*+\s*', '', content)
+                        content = content.strip()
+                        
+                        if content:
+                            # 分割逗号分隔的内容
+                            if ',' in content:
+                                items = [item.strip() for item in content.split(',')]
+                                for item in items:
+                                    if len(item) > 2:
+                                        queries.append(item)
+                            else:
+                                queries.append(content)
         
-        # 如果没有找到明确的查询，返回默认查询
-        if not queries:
-            queries = ["技术调研", "最佳实践"]
+        # 去重和清理
+        unique_queries = []
+        seen = set()
         
-        return queries[:5]  # 限制查询数量
+        for query in queries:
+            query = query.strip()
+            # 清理特殊字符，保留中英文、数字、空格
+            query = re.sub(r'[^\w\s\u4e00-\u9fff]', '', query)
+            query = query.strip()
+            
+            if query and len(query) > 2 and query not in seen:
+                seen.add(query)
+                unique_queries.append(query)
+        
+        return unique_queries
+    
     
     def execute(self, query: str, max_iterations: int = 3) -> Dict[str, Any]:
         """

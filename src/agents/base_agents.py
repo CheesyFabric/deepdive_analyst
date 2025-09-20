@@ -7,8 +7,28 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from loguru import logger
 from crewai import Agent, Task, Crew
+from pydantic import BaseModel, Field
 from src.configs.config import Config, AgentConfig
 from src.llm.llm_factory import LLMFactory
+import json
+import re
+import ast
+
+
+class TaskResult(BaseModel):
+    """任务执行结果的Pydantic模型"""
+    result: str = Field(description="任务执行结果")
+    success: bool = Field(description="任务是否成功")
+
+
+class CritiqueResult(BaseModel):
+    """批判性分析结果的Pydantic模型"""
+    critique: str = Field(description="详细的批判性分析内容")
+    completeness_score: int = Field(ge=1, le=10, description="信息完整性评分 (1-10分)")
+    accuracy_score: int = Field(ge=1, le=10, description="信息准确性评分 (1-10分)")
+    needs_more_research: bool = Field(description="是否需要更多研究")
+    missing_information: List[str] = Field(default=[], description="缺失的信息列表")
+    recommendations: List[str] = Field(default=[], description="改进建议列表")
 
 
 @dataclass
@@ -171,13 +191,16 @@ class BaseAgent:
         
         return QwenAdapter(llm_config)
     
-    def execute_task(self, task_description: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
+    def execute_task(self, task_description: str, context: Optional[Dict[str, Any]] = None, 
+                     use_json_output: bool = False, output_model: Optional[BaseModel] = None) -> AgentResult:
         """
         执行任务
         
         Args:
             task_description: 任务描述
             context: 上下文信息
+            use_json_output: 是否使用JSON输出格式
+            output_model: Pydantic模型类（当use_json_output=True时使用）
             
         Returns:
             Agent执行结果
@@ -186,11 +209,21 @@ class BaseAgent:
             logger.info(f"Agent '{self.name}' 开始执行任务: {task_description}")
             
             # 创建任务
-            task = Task(
-                description=task_description,
-                agent=self.agent,
-                expected_output="详细的任务执行结果"
-            )
+            task_kwargs = {
+                'description': task_description,
+                'agent': self.agent,
+                'expected_output': "详细的任务执行结果"
+            }
+            
+            # 如果需要JSON输出，添加output_json属性
+            if use_json_output:
+                if output_model:
+                    task_kwargs['output_json'] = output_model
+                else:
+                    # 默认使用TaskResult模型
+                    task_kwargs['output_json'] = TaskResult
+            
+            task = Task(**task_kwargs)
             
             # 创建Crew并执行
             crew = Crew(
@@ -201,6 +234,13 @@ class BaseAgent:
             
             # 执行任务
             result = crew.kickoff()
+            
+            # 如果任务要求JSON输出，但返回的不是纯JSON字符串，尽量序列化为JSON字符串
+            if use_json_output and not isinstance(result, str):
+                try:
+                    result = json.dumps(result)
+                except Exception:
+                    result = str(result)
             
             logger.info(f"Agent '{self.name}' 任务执行成功")
             return AgentResult(
@@ -411,19 +451,50 @@ class CriticAnalystAgent(BaseAgent):
         如果信息已足够，请确认可以进入报告撰写阶段。
         """
         
-        result = self.execute_task(critique_prompt)
+        result = self.execute_task(critique_prompt, use_json_output=True, output_model=CritiqueResult)
         if result.success:
-            # 简单判断是否需要继续研究
-            critique_text = result.result.lower()
-            needs_more_research = any(keyword in critique_text for keyword in [
-                '不充分', '不完整', '需要补充', '遗漏', 'insufficient', 'incomplete', 'need more'
-            ])
-            
-            return {
-                'critique': result.result,
-                'needs_more_research': needs_more_research,
-                'success': True
-            }
+            try:
+                # 尝试解析JSON结果（处理常见的围栏与单引号问题）
+                raw_text = result.result.strip()
+                
+                # 去除markdown代码围栏
+                if raw_text.startswith("```"):
+                    raw_text = re.sub(r"^```[a-zA-Z]*\n|```$", "", raw_text).strip()
+                
+                # 优先尝试标准JSON解析
+                try:
+                    critique_data = json.loads(raw_text)
+                except json.JSONDecodeError:
+                    # 如果标准JSON解析失败，尝试用ast.literal_eval解析Python字典字符串
+                    critique_data = ast.literal_eval(raw_text)
+                
+                return {
+                    'critique': critique_data.get('critique', raw_text),
+                    'completeness_score': critique_data.get('completeness_score', 5),
+                    'accuracy_score': critique_data.get('accuracy_score', 5),
+                    'needs_more_research': critique_data.get('needs_more_research', False),
+                    'missing_information': critique_data.get('missing_information', []),
+                    'recommendations': critique_data.get('recommendations', []),
+                    'success': True
+                }
+                
+            except Exception as e:
+                # 如果所有解析方法都失败，回退到文本分析
+                logger.warning(f"JSON解析失败: {e}，已回退到文本分析")
+                critique_text = raw_text.lower()
+                needs_more_research = any(keyword in critique_text for keyword in [
+                    '不充分', '不完整', '需要补充', '遗漏', 'insufficient', 'incomplete', 'need more'
+                ])
+                
+                return {
+                    'critique': raw_text,
+                    'completeness_score': 5,
+                    'accuracy_score': 5,
+                    'needs_more_research': needs_more_research,
+                    'missing_information': [],
+                    'recommendations': [],
+                    'success': True
+                }
         else:
             return {
                 'critique': '',
