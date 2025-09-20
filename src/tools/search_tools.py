@@ -5,6 +5,8 @@
 
 import os
 import time
+import atexit
+import threading
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import requests
@@ -46,7 +48,35 @@ class TavilySearchTool:
             raise ImportError("Tavily客户端未安装，请运行: pip install tavily-python")
         
         self.client = TavilyClient(api_key=self.api_key)
+        self._session = requests.Session()
+        self._cleanup_registered = False
+        
+        # 注册清理函数
+        self._register_cleanup()
+        
         logger.info("Tavily搜索工具初始化成功")
+    
+    def _register_cleanup(self):
+        """注册清理函数"""
+        if not self._cleanup_registered:
+            atexit.register(self._cleanup)
+            self._cleanup_registered = True
+    
+    def _cleanup(self):
+        """清理资源"""
+        try:
+            if hasattr(self, '_session') and self._session:
+                self._session.close()
+                logger.debug("Tavily搜索工具会话已关闭")
+        except Exception as e:
+            logger.debug(f"清理Tavily搜索工具时出现警告: {e}")
+    
+    def __del__(self):
+        """析构函数"""
+        try:
+            self._cleanup()
+        except Exception:
+            pass  # 忽略析构函数中的异常
     
     def search(
         self, 
@@ -145,7 +175,34 @@ class WebScrapingTool:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
+        self._cleanup_registered = False
+        
+        # 注册清理函数
+        self._register_cleanup()
+        
         logger.info("网页抓取工具初始化成功")
+    
+    def _register_cleanup(self):
+        """注册清理函数"""
+        if not self._cleanup_registered:
+            atexit.register(self._cleanup)
+            self._cleanup_registered = True
+    
+    def _cleanup(self):
+        """清理资源"""
+        try:
+            if hasattr(self, 'session') and self.session:
+                self.session.close()
+                logger.debug("网页抓取工具会话已关闭")
+        except Exception as e:
+            logger.debug(f"清理网页抓取工具时出现警告: {e}")
+    
+    def __del__(self):
+        """析构函数"""
+        try:
+            self._cleanup()
+        except Exception:
+            pass  # 忽略析构函数中的异常
     
     def scrape_url(self, url: str) -> Dict[str, Any]:
         """
@@ -279,6 +336,7 @@ class SearchToolsManager:
         """
         self.tavily_tool = None
         self.web_scraping_tool = WebScrapingTool()
+        self._cleanup_registered = False
         
         # 尝试初始化Tavily工具
         try:
@@ -286,6 +344,37 @@ class SearchToolsManager:
             logger.info("搜索工具管理器初始化成功")
         except Exception as e:
             logger.warning(f"Tavily工具初始化失败: {str(e)}")
+        
+        # 注册全局清理函数
+        self._register_cleanup()
+    
+    def _register_cleanup(self):
+        """注册清理函数"""
+        if not self._cleanup_registered:
+            atexit.register(self._cleanup)
+            self._cleanup_registered = True
+    
+    def _cleanup(self):
+        """清理所有资源"""
+        try:
+            # 清理 Tavily 工具
+            if self.tavily_tool:
+                self.tavily_tool._cleanup()
+            
+            # 清理网页抓取工具
+            if self.web_scraping_tool:
+                self.web_scraping_tool._cleanup()
+            
+            logger.debug("搜索工具管理器资源已清理")
+        except Exception as e:
+            logger.debug(f"清理搜索工具管理器时出现警告: {e}")
+    
+    def __del__(self):
+        """析构函数"""
+        try:
+            self._cleanup()
+        except Exception:
+            pass  # 忽略析构函数中的异常
     
     def comprehensive_search(
         self, 

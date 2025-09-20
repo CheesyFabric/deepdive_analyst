@@ -8,6 +8,9 @@ DeepDive Analyst - AI技术专家调研与分析智能体团队
 """
 
 import typer
+import atexit
+import signal
+import sys
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -19,6 +22,38 @@ app = typer.Typer(
     help="AI技术专家调研与分析智能体团队",
     add_completion=False
 )
+
+# 全局清理函数
+def cleanup_resources():
+    """清理所有资源"""
+    try:
+        # 清理日志
+        from loguru import logger
+        logger.info("程序退出，正在清理资源...")
+        
+        # 清理搜索工具
+        try:
+            from src.tools.search_tools import SearchToolsManager
+            # 这里不需要手动清理，因为 atexit 已经注册了清理函数
+        except Exception:
+            pass
+        
+        logger.info("资源清理完成")
+    except Exception as e:
+        # 忽略清理过程中的异常
+        pass
+
+# 注册清理函数
+atexit.register(cleanup_resources)
+
+# 注册信号处理器
+def signal_handler(signum, frame):
+    """信号处理器"""
+    cleanup_resources()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 
 @app.command()

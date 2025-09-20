@@ -370,13 +370,24 @@ class ChiefPlannerAgent(BaseAgent):
 class WebResearcherAgent(BaseAgent):
     """网络研究员Agent"""
     
-    def __init__(self):
+    def __init__(self, search_tools=None):
         super().__init__(
             name="WebResearcherAgent",
             role=AgentConfig.WEB_RESEARCHER_ROLE,
             goal=AgentConfig.WEB_RESEARCHER_GOAL,
             backstory=AgentConfig.WEB_RESEARCHER_BACKSTORY
         )
+        # 初始化搜索工具
+        if search_tools is None:
+            from src.tools.search_tools import SearchToolsManager
+            try:
+                self.search_tools = SearchToolsManager()
+                logger.info("WebResearcherAgent 搜索工具初始化成功")
+            except Exception as e:
+                logger.warning(f"WebResearcherAgent 搜索工具初始化失败: {e}")
+                self.search_tools = None
+        else:
+            self.search_tools = search_tools
     
     def research_topic(self, research_plan: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -388,40 +399,109 @@ class WebResearcherAgent(BaseAgent):
         Returns:
             研究结果
         """
-        research_prompt = f"""
-        基于以下研究计划，执行网络研究：
+        try:
+            # 首先使用搜索工具收集信息
+            search_results = []
+            if self.search_tools:
+                queries = research_plan.get('research_queries', [])
+                if not queries:
+                    # 如果没有提供查询，从研究计划中提取
+                    queries = [research_plan.get('query', '')]
+                
+                logger.info(f"开始执行网络搜索，查询数量: {len(queries)}")
+                
+                for query in queries[:5]:  # 限制查询数量
+                    if query.strip():
+                        try:
+                            results = self.search_tools.comprehensive_search(
+                                query=query,
+                                max_results=5,
+                                scrape_content=True
+                            )
+                            search_results.extend(results)
+                            logger.info(f"查询 '{query}' 找到 {len(results)} 个结果")
+                        except Exception as e:
+                            logger.warning(f"搜索查询 '{query}' 失败: {e}")
+                            continue
+            
+            # 构建包含搜索结果的提示
+            search_context = ""
+            if search_results:
+                search_context = "\n\n**网络搜索结果:**\n"
+                for i, result in enumerate(search_results[:10], 1):  # 限制结果数量
+                    search_context += f"{i}. **{result.get('title', '无标题')}**\n"
+                    search_context += f"   链接: {result.get('url', '无链接')}\n"
+                    search_context += f"   内容: {result.get('content', '无内容')[:200]}...\n\n"
+            else:
+                search_context = "\n\n**注意**: 未能获取到网络搜索结果，将基于现有知识进行分析。\n"
+            
+            # 检测查询语言
+            query_language = self._detect_query_language(research_plan.get('query', ''))
+            
+            research_prompt = f"""
+            基于以下研究计划和网络搜索结果，执行深入分析：
 
-        研究计划: {research_plan.get('plan', '')}
-        查询: {research_plan.get('query', '')}
-        意图: {research_plan.get('intent', '')}
+            **研究计划:**
+            {research_plan.get('plan', '')}
+            
+            **原始查询:**
+            {research_plan.get('query', '')}
+            
+            **查询意图:**
+            {research_plan.get('intent', '')}
+            {search_context}
+            
+            **重要：请严格按照以下要求进行分析：**
+            1. **语言要求**: 分析结果必须使用与原始查询相同的语言。原始查询是{query_language}，因此分析结果必须完全使用{query_language}撰写。
+            2. 关键发现和重要信息
+            3. 信息来源和可信度评估
+            4. 技术细节和实现方式
+            5. 优缺点分析
+            6. 需要进一步研究的方向
+            7. 相关案例和应用场景
 
-        请提供：
-        1. 找到的关键信息
-        2. 信息来源
-        3. 重要发现
-        4. 需要进一步研究的方向
-
-        请确保信息的准确性和相关性。
-        """
-        
-        result = self.execute_task(research_prompt)
-        return {
-            'research_data': result.result if result.success else '',
-            'success': result.success,
-            'error': result.error_message if not result.success else None
-        }
+            请确保信息的准确性、完整性和相关性，并使用{query_language}撰写分析结果。
+            """
+            
+            result = self.execute_task(research_prompt)
+            return {
+                'research_data': result.result if result.success else '',
+                'search_results': search_results,
+                'success': result.success,
+                'error': result.error_message if not result.success else None
+            }
+            
+        except Exception as e:
+            logger.error(f"研究任务执行失败: {e}")
+            return {
+                'research_data': '',
+                'search_results': [],
+                'success': False,
+                'error': str(e)
+            }
 
 
 class CriticAnalystAgent(BaseAgent):
     """批判性分析师Agent"""
     
-    def __init__(self):
+    def __init__(self, search_tools=None):
         super().__init__(
             name="CriticAnalystAgent",
             role=AgentConfig.CRITIC_ANALYST_ROLE,
             goal=AgentConfig.CRITIC_ANALYST_GOAL,
             backstory=AgentConfig.CRITIC_ANALYST_BACKSTORY
         )
+        # 初始化搜索工具（用于验证和补充信息）
+        if search_tools is None:
+            from src.tools.search_tools import SearchToolsManager
+            try:
+                self.search_tools = SearchToolsManager()
+                logger.info("CriticAnalystAgent 搜索工具初始化成功")
+            except Exception as e:
+                logger.warning(f"CriticAnalystAgent 搜索工具初始化失败: {e}")
+                self.search_tools = None
+        else:
+            self.search_tools = search_tools
     
     def critique_research(self, research_data: str, original_query: str) -> Dict[str, Any]:
         """
@@ -434,21 +514,61 @@ class CriticAnalystAgent(BaseAgent):
         Returns:
             批判分析结果
         """
+        # 使用搜索工具验证关键信息
+        verification_results = []
+        if self.search_tools:
+            try:
+                # 提取关键术语进行验证搜索
+                key_terms = self._extract_key_terms_for_verification(original_query, research_data)
+                logger.info(f"开始验证关键术语: {key_terms}")
+                
+                for term in key_terms[:3]:  # 限制验证查询数量
+                    try:
+                        verification = self.search_tools.comprehensive_search(
+                            query=f"{term} 技术 文档 官方",
+                            max_results=3,
+                            scrape_content=False  # 只获取标题和链接用于验证
+                        )
+                        verification_results.extend(verification)
+                    except Exception as e:
+                        logger.warning(f"验证搜索 '{term}' 失败: {e}")
+                        continue
+            except Exception as e:
+                logger.warning(f"验证搜索过程失败: {e}")
+        
+        # 构建验证上下文
+        verification_context = ""
+        if verification_results:
+            verification_context = "\n\n**验证搜索结果:**\n"
+            for i, result in enumerate(verification_results[:5], 1):
+                verification_context += f"{i}. {result.get('title', '无标题')} - {result.get('url', '无链接')}\n"
+            verification_context += "\n"
+        
+        # 检测查询语言
+        query_language = self._detect_query_language(original_query)
+        
         critique_prompt = f"""
         请对以下研究结果进行批判性分析：
 
-        原始查询: {original_query}
-        研究数据: {research_data}
-
-        请评估：
-        1. 信息的完整性和准确性
-        2. 是否存在矛盾或遗漏
-        3. 是否偏离了原始查询
-        4. 需要补充的信息
-        5. 整体质量评分 (1-10分)
+        **原始查询:** {original_query}
+        
+        **研究数据:** {research_data}
+        {verification_context}
+        
+        **重要：请严格按照以下要求进行分析：**
+        1. **语言要求**: 分析结果必须使用与原始查询相同的语言。原始查询是{query_language}，因此分析结果必须完全使用{query_language}撰写。
+        2. 信息的完整性和准确性
+        3. 是否存在矛盾或遗漏
+        4. 是否偏离了原始查询
+        5. 需要补充的信息
+        6. 整体质量评分 (1-10分)
+        7. 信息来源的可信度
+        8. 技术细节的准确性
 
         如果信息不充分，请提供具体的补充建议。
         如果信息已足够，请确认可以进入报告撰写阶段。
+        
+        请使用{query_language}撰写分析结果。
         """
         
         result = self.execute_task(critique_prompt, use_json_output=True, output_model=CritiqueResult)
@@ -502,6 +622,49 @@ class CriticAnalystAgent(BaseAgent):
                 'success': False,
                 'error': result.error_message
             }
+    
+    def _extract_key_terms_for_verification(self, original_query: str, research_data: str) -> List[str]:
+        """
+        从查询和研究数据中提取关键术语用于验证
+        
+        Args:
+            original_query: 原始查询
+            research_data: 研究数据
+            
+        Returns:
+            关键术语列表
+        """
+        import re
+        
+        # 从原始查询中提取技术术语
+        tech_keywords = []
+        
+        # 常见技术术语模式
+        tech_patterns = [
+            r'\b[A-Z][a-zA-Z]*[A-Z][a-zA-Z]*\b',  # CamelCase 技术名称
+            r'\b[a-z]+-[a-z]+\b',  # kebab-case 技术名称
+            r'\b[a-z]+_[a-z]+\b',  # snake_case 技术名称
+        ]
+        
+        for pattern in tech_patterns:
+            matches = re.findall(pattern, original_query)
+            tech_keywords.extend(matches)
+        
+        # 从研究数据中提取提到的技术名称
+        research_terms = []
+        if research_data:
+            # 查找技术名称（首字母大写的词）
+            tech_matches = re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', research_data)
+            research_terms.extend(tech_matches[:10])  # 限制数量
+        
+        # 合并并去重
+        all_terms = list(set(tech_keywords + research_terms))
+        
+        # 过滤掉常见的非技术词汇
+        common_words = {'The', 'This', 'That', 'With', 'From', 'They', 'There', 'These', 'Those'}
+        filtered_terms = [term for term in all_terms if term not in common_words]
+        
+        return filtered_terms[:5]  # 返回前5个术语
 
 
 class ReportWriterAgent(BaseAgent):
@@ -529,6 +692,10 @@ class ReportWriterAgent(BaseAgent):
         """
         from src.configs.templates import template_processor
         
+        # 检测用户查询的语言
+        query_language = self._detect_query_language(query)
+        logger.info(f"检测到查询语言: {query_language}")
+        
         # 使用模板处理器生成报告
         report_data = {
             'title': f"{query} - 技术调研报告",
@@ -542,7 +709,7 @@ class ReportWriterAgent(BaseAgent):
         try:
             report_content = template_processor.process_template(intent, report_data)
             
-            # 使用Agent进一步优化报告内容
+            # 使用Agent进一步优化报告内容，明确指定语言要求
             optimization_prompt = f"""
             请基于以下研究数据，优化和完善这份技术报告：
 
@@ -550,15 +717,17 @@ class ReportWriterAgent(BaseAgent):
             查询意图: {intent}
             研究数据: {research_data}
 
-            请确保报告：
-            1. 内容详实、逻辑清晰
-            2. 使用专业的技术术语
-            3. 提供具体的例子和代码
-            4. 确保信息的准确性
-            5. 保持Markdown格式
-            6. 结构完整，各部分内容充实
+            **重要：请严格按照以下要求生成报告：**
+            1. **语言要求**: 报告必须使用与原始查询相同的语言。原始查询是{query_language}，因此报告必须完全使用{query_language}撰写。
+            2. 内容详实、逻辑清晰
+            3. 使用专业的技术术语
+            4. 提供具体的例子和代码
+            5. 确保信息的准确性
+            6. 保持Markdown格式
+            7. 结构完整，各部分内容充实
+            8. **绝对不要混用其他语言**，整个报告必须保持语言一致性
 
-            请直接输出优化后的完整报告内容：
+            请直接输出优化后的完整报告内容（使用{query_language}）：
             """
             
             result = self.execute_task(optimization_prompt)
@@ -578,7 +747,9 @@ class ReportWriterAgent(BaseAgent):
             查询意图: {intent}
             研究数据: {research_data}
 
-            请生成一份结构清晰、内容详实的Markdown格式报告。
+            **重要：报告必须使用{query_language}撰写，与原始查询语言保持一致。**
+
+            请生成一份结构清晰、内容详实的Markdown格式报告（使用{query_language}）。
             """
             
             result = self.execute_task(simple_prompt)
@@ -586,3 +757,84 @@ class ReportWriterAgent(BaseAgent):
                 return result.result
             else:
                 return f"报告生成失败: {result.error_message}"
+    
+    def _detect_query_language(self, query: str) -> str:
+        """
+        检测查询语言
+        
+        Args:
+            query: 用户查询
+            
+        Returns:
+            检测到的语言名称
+        """
+        import re
+        
+        # 英文字符检测
+        english_pattern = re.compile(r'[a-zA-Z]')
+        english_count = len(english_pattern.findall(query))
+        
+        # 中文字符检测
+        chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
+        chinese_count = len(chinese_pattern.findall(query))
+        
+        # 根据字符数量判断主要语言
+        total_chars = len(query.strip())
+        if total_chars == 0:
+            return "中文"  # 默认返回中文
+        
+        # 计算各语言字符占比
+        chinese_ratio = chinese_count / total_chars
+        english_ratio = english_count / total_chars
+        
+        # 判断主要语言
+        # 优先考虑中文（即使占比不高）
+        if chinese_count > 0:
+            return "中文"
+        elif english_count > 0:
+            return "英文"
+        else:
+            return "中文"  # 默认返回中文
+
+
+# 将语言检测方法添加到BaseAgent类中，让所有Agent都能使用
+def _detect_query_language(self, query: str) -> str:
+    """
+    检测查询语言
+    
+    Args:
+        query: 用户查询
+        
+    Returns:
+        检测到的语言名称
+    """
+    import re
+    
+    # 英文字符检测
+    english_pattern = re.compile(r'[a-zA-Z]')
+    english_count = len(english_pattern.findall(query))
+    
+    # 中文字符检测
+    chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
+    chinese_count = len(chinese_pattern.findall(query))
+    
+    # 根据字符数量判断主要语言
+    total_chars = len(query.strip())
+    if total_chars == 0:
+        return "中文"  # 默认返回中文
+    
+    # 计算各语言字符占比
+    chinese_ratio = chinese_count / total_chars
+    english_ratio = english_count / total_chars
+    
+    # 判断主要语言
+    # 优先考虑中文（即使占比不高）
+    if chinese_count > 0:
+        return "中文"
+    elif english_count > 0:
+        return "英文"
+    else:
+        return "中文"  # 默认返回中文
+
+# 将方法添加到BaseAgent类
+BaseAgent._detect_query_language = _detect_query_language

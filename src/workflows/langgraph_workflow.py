@@ -50,15 +50,15 @@ class LangGraphWorkflow:
     
     def __init__(self):
         """初始化LangGraph工作流"""
-        # 初始化所有Agent
-        self.classifier = QueryClassifierAgent()
-        self.planner = ChiefPlannerAgent()
-        self.researcher = WebResearcherAgent()
-        self.critic = CriticAnalystAgent()
-        self.writer = ReportWriterAgent()
-        
         # 初始化搜索工具
         self.search_tools = SearchToolsManager()
+        
+        # 初始化所有Agent，并传递搜索工具
+        self.classifier = QueryClassifierAgent()
+        self.planner = ChiefPlannerAgent()
+        self.researcher = WebResearcherAgent(search_tools=self.search_tools)
+        self.critic = CriticAnalystAgent(search_tools=self.search_tools)
+        self.writer = ReportWriterAgent()
         
         # 构建图
         self.graph = self._build_graph()
