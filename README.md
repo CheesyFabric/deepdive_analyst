@@ -177,7 +177,7 @@ LANGCHAIN_PROJECT=deepdive-analyst
 
 ```bash
 # 执行技术调研
-python main.py research --query "对比CrewAI和Autogen在实现多智能体协作方面的异同点" --output "comparison_report.md"
+python main.py research --query "对比Flask和Django的异同点" --output "report.md"
 
 # 查看帮助
 python main.py --help
