@@ -37,6 +37,14 @@ class GraphState(TypedDict):
     critique_feedback: str
     needs_more_research: bool
     
+    # 动态评分信息
+    completeness_score: int
+    accuracy_score: int
+    overall_score: float
+    quality_metrics: Dict[str, Any]
+    adjustment_factors: Dict[str, float]
+    critique_standards: Dict[str, Any]
+    
     # 最终输出
     final_report: str
     
@@ -182,20 +190,34 @@ class LangGraphWorkflow:
         return state
     
     def _critique_node(self, state: GraphState) -> GraphState:
-        """批判节点"""
-        logger.info("执行批判节点")
+        """批判节点（支持动态评分）"""
+        current_iteration = state.get("research_iteration", 1)
+        logger.info(f"执行批判节点 (第{current_iteration}轮)")
         
         try:
             critique_result = self.critic.critique_research(
                 state["researched_data"],
-                state["original_query"]
+                state["original_query"],
+                iteration=current_iteration
             )
             
             if critique_result["success"]:
                 state["critique_feedback"] = critique_result["critique"]
                 state["needs_more_research"] = critique_result["needs_more_research"]
+                
+                # 保存动态评分信息
+                state["completeness_score"] = critique_result.get("completeness_score", 5)
+                state["accuracy_score"] = critique_result.get("accuracy_score", 5)
+                state["overall_score"] = critique_result.get("overall_score", 5.0)
+                state["quality_metrics"] = critique_result.get("quality_metrics", {})
+                state["adjustment_factors"] = critique_result.get("adjustment_factors", {})
+                state["critique_standards"] = critique_result.get("critique_standards", {})
+                
                 state["success"] = True
-                logger.info("批判分析完成")
+                logger.info(f"第{current_iteration}轮批判分析完成 - "
+                          f"完整性:{state['completeness_score']}, "
+                          f"准确性:{state['accuracy_score']}, "
+                          f"综合:{state['overall_score']}")
             else:
                 state["error_message"] = critique_result.get("error", "批判分析失败")
                 state["success"] = False
@@ -464,6 +486,12 @@ class LangGraphWorkflow:
             max_iterations=max_iterations,
             critique_feedback="",
             needs_more_research=False,
+            completeness_score=0,
+            accuracy_score=0,
+            overall_score=0.0,
+            quality_metrics={},
+            adjustment_factors={},
+            critique_standards={},
             final_report="",
             error_message="",
             success=True
@@ -483,7 +511,14 @@ class LangGraphWorkflow:
                 "final_report": final_state.get("final_report", ""),
                 "research_iterations": final_state.get("research_iteration", 0),
                 "error": final_state.get("error_message", ""),
-                "langsmith_enabled": langsmith_enabled
+                "langsmith_enabled": langsmith_enabled,
+                # 动态评分信息
+                "completeness_score": final_state.get("completeness_score", 0),
+                "accuracy_score": final_state.get("accuracy_score", 0),
+                "overall_score": final_state.get("overall_score", 0.0),
+                "quality_metrics": final_state.get("quality_metrics", {}),
+                "adjustment_factors": final_state.get("adjustment_factors", {}),
+                "critique_standards": final_state.get("critique_standards", {})
             }
             
             # 如果启用了LangSmith，添加追踪信息
@@ -527,6 +562,17 @@ class LangGraphWorkflow:
 - **查询意图**: {results['intent']}
 - **研究迭代次数**: {results.get('research_iterations', 0)}
 
+## 动态评分结果
+- **完整性评分**: {results.get('completeness_score', 0)}/10
+- **准确性评分**: {results.get('accuracy_score', 0)}/10
+- **综合评分**: {results.get('overall_score', 0.0)}/10
+
+## 质量指标
+{self._format_quality_metrics(results.get('quality_metrics', {}))}
+
+## 调整因子
+{self._format_adjustment_factors(results.get('adjustment_factors', {}))}
+
 ## 执行结果
 ✅ **工作流执行成功**
 
@@ -535,3 +581,51 @@ class LangGraphWorkflow:
 """
         
         return summary
+    
+    def _format_quality_metrics(self, quality_metrics) -> str:
+        """格式化质量指标"""
+        if not quality_metrics:
+            return "- 无质量指标数据"
+        
+        formatted = []
+        
+        # 处理 QualityMetrics 对象
+        if hasattr(quality_metrics, '__dataclass_fields__'):
+            # 这是一个数据类对象
+            for field_name, field_info in quality_metrics.__dataclass_fields__.items():
+                value = getattr(quality_metrics, field_name)
+                if isinstance(value, float):
+                    formatted.append(f"- **{field_name}**: {value:.2f}")
+                else:
+                    formatted.append(f"- **{field_name}**: {value}")
+        elif isinstance(quality_metrics, dict):
+            # 这是一个字典
+            for key, value in quality_metrics.items():
+                if isinstance(value, float):
+                    formatted.append(f"- **{key}**: {value:.2f}")
+                else:
+                    formatted.append(f"- **{key}**: {value}")
+        else:
+            # 其他类型的对象，尝试转换为字典
+            try:
+                quality_dict = quality_metrics.__dict__
+                for key, value in quality_dict.items():
+                    if isinstance(value, float):
+                        formatted.append(f"- **{key}**: {value:.2f}")
+                    else:
+                        formatted.append(f"- **{key}**: {value}")
+            except AttributeError:
+                return "- 无法解析质量指标数据"
+        
+        return "\n".join(formatted) if formatted else "- 无质量指标数据"
+    
+    def _format_adjustment_factors(self, adjustment_factors: Dict[str, float]) -> str:
+        """格式化调整因子"""
+        if not adjustment_factors:
+            return "- 无调整因子数据"
+        
+        formatted = []
+        for key, value in adjustment_factors.items():
+            formatted.append(f"- **{key}**: {value:+.2f}")
+        
+        return "\n".join(formatted) if formatted else "- 无调整因子数据"

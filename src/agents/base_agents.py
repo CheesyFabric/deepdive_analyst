@@ -10,6 +10,7 @@ from crewai import Agent, Task, Crew
 from pydantic import BaseModel, Field
 from src.configs.config import Config, AgentConfig
 from src.llm.llm_factory import LLMFactory
+from src.agents.scoring_manager import DynamicScoringManager
 import json
 import re
 import ast
@@ -502,18 +503,25 @@ class CriticAnalystAgent(BaseAgent):
                 self.search_tools = None
         else:
             self.search_tools = search_tools
+        
+        # 初始化动态评分管理器
+        self.scoring_manager = DynamicScoringManager()
+        logger.info("CriticAnalystAgent 动态评分管理器初始化成功")
     
-    def critique_research(self, research_data: str, original_query: str) -> Dict[str, Any]:
+    def critique_research(self, research_data: str, original_query: str, iteration: int = 1) -> Dict[str, Any]:
         """
-        批判性分析研究结果
+        批判性分析研究结果（支持动态评分）
         
         Args:
             research_data: 研究数据
             original_query: 原始查询
+            iteration: 当前迭代次数
             
         Returns:
             批判分析结果
         """
+        logger.info(f"开始第{iteration}轮批判分析")
+        
         # 使用搜索工具验证关键信息
         verification_results = []
         if self.search_tools:
@@ -547,6 +555,9 @@ class CriticAnalystAgent(BaseAgent):
         # 检测查询语言
         query_language = self._detect_query_language(original_query)
         
+        # 获取渐进式批判标准
+        critique_standards = self.scoring_manager._get_progressive_critique_standards(iteration)
+        
         critique_prompt = f"""
         请对以下研究结果进行批判性分析：
 
@@ -555,15 +566,23 @@ class CriticAnalystAgent(BaseAgent):
         **研究数据:** {research_data}
         {verification_context}
         
+        **当前迭代轮次:** 第{iteration}轮
+        **批判重点:** {critique_standards['focus']}
+        **评分阈值:** {critique_standards['threshold']}分
+        
         **重要：请严格按照以下要求进行分析：**
         1. **语言要求**: 分析结果必须使用与原始查询相同的语言。原始查询是{query_language}，因此分析结果必须完全使用{query_language}撰写。
-        2. 信息的完整性和准确性
-        3. 是否存在矛盾或遗漏
-        4. 是否偏离了原始查询
-        5. 需要补充的信息
-        6. 整体质量评分 (1-10分)
-        7. 信息来源的可信度
-        8. 技术细节的准确性
+        2. **迭代调整**: 这是第{iteration}轮分析，请根据迭代次数调整批判标准：
+           - 第1轮：重点关注基础信息完整性，给予适当宽容
+           - 第2轮：重点关注信息准确性，适度严格
+           - 第3轮及以后：重点关注深度分析和一致性，较为严格
+        3. 信息的完整性和准确性
+        4. 是否存在矛盾或遗漏
+        5. 是否偏离了原始查询
+        6. 需要补充的信息
+        7. 整体质量评分 (1-10分，考虑迭代调整)
+        8. 信息来源的可信度
+        9. 技术细节的准确性
 
         如果信息不充分，请提供具体的补充建议。
         如果信息已足够，请确认可以进入报告撰写阶段。
@@ -588,13 +607,33 @@ class CriticAnalystAgent(BaseAgent):
                     # 如果标准JSON解析失败，尝试用ast.literal_eval解析Python字典字符串
                     critique_data = ast.literal_eval(raw_text)
                 
+                # 获取基础评分
+                base_scores = {
+                    'completeness': critique_data.get('completeness_score', 5),
+                    'accuracy': critique_data.get('accuracy_score', 5)
+                }
+                
+                # 使用动态评分管理器计算调整后的评分
+                dynamic_result = self.scoring_manager.calculate_dynamic_score(
+                    base_scores=base_scores,
+                    iteration=iteration,
+                    research_data=research_data,
+                    original_query=original_query
+                )
+                
+                # 构建返回结果
                 return {
                     'critique': critique_data.get('critique', raw_text),
-                    'completeness_score': critique_data.get('completeness_score', 5),
-                    'accuracy_score': critique_data.get('accuracy_score', 5),
-                    'needs_more_research': critique_data.get('needs_more_research', False),
+                    'completeness_score': dynamic_result['completeness_score'],
+                    'accuracy_score': dynamic_result['accuracy_score'],
+                    'overall_score': dynamic_result['overall_score'],
+                    'needs_more_research': dynamic_result['needs_more_research'],
                     'missing_information': critique_data.get('missing_information', []),
                     'recommendations': critique_data.get('recommendations', []),
+                    'quality_metrics': dynamic_result['quality_metrics'],
+                    'adjustment_factors': dynamic_result['adjustment_factors'],
+                    'critique_standards': dynamic_result['critique_standards'],
+                    'iteration': iteration,
                     'success': True
                 }
                 
@@ -606,19 +645,49 @@ class CriticAnalystAgent(BaseAgent):
                     '不充分', '不完整', '需要补充', '遗漏', 'insufficient', 'incomplete', 'need more'
                 ])
                 
+                # 使用默认评分进行动态调整
+                base_scores = {'completeness': 5, 'accuracy': 5}
+                dynamic_result = self.scoring_manager.calculate_dynamic_score(
+                    base_scores=base_scores,
+                    iteration=iteration,
+                    research_data=research_data,
+                    original_query=original_query
+                )
+                
                 return {
                     'critique': raw_text,
-                    'completeness_score': 5,
-                    'accuracy_score': 5,
-                    'needs_more_research': needs_more_research,
+                    'completeness_score': dynamic_result['completeness_score'],
+                    'accuracy_score': dynamic_result['accuracy_score'],
+                    'overall_score': dynamic_result['overall_score'],
+                    'needs_more_research': needs_more_research or dynamic_result['needs_more_research'],
                     'missing_information': [],
                     'recommendations': [],
+                    'quality_metrics': dynamic_result['quality_metrics'],
+                    'adjustment_factors': dynamic_result['adjustment_factors'],
+                    'critique_standards': dynamic_result['critique_standards'],
+                    'iteration': iteration,
                     'success': True
                 }
         else:
+            # 出错时使用默认评分
+            base_scores = {'completeness': 5, 'accuracy': 5}
+            dynamic_result = self.scoring_manager.calculate_dynamic_score(
+                base_scores=base_scores,
+                iteration=iteration,
+                research_data=research_data,
+                original_query=original_query
+            )
+            
             return {
                 'critique': '',
+                'completeness_score': dynamic_result['completeness_score'],
+                'accuracy_score': dynamic_result['accuracy_score'],
+                'overall_score': dynamic_result['overall_score'],
                 'needs_more_research': True,  # 出错时默认需要更多研究
+                'quality_metrics': dynamic_result['quality_metrics'],
+                'adjustment_factors': dynamic_result['adjustment_factors'],
+                'critique_standards': dynamic_result['critique_standards'],
+                'iteration': iteration,
                 'success': False,
                 'error': result.error_message
             }

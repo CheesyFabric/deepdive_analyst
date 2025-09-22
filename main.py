@@ -118,6 +118,13 @@ def research(
             console.print(f"[blue]📊[/blue] 研究迭代次数: {results.get('research_iterations', 0)}")
             console.print(f"[blue]📊[/blue] 查询意图: {results.get('intent', '未知')}")
             
+            # 显示动态评分信息
+            if results.get('overall_score', 0) > 0:
+                console.print(f"[green]📈[/green] 动态评分结果:")
+                console.print(f"  - 完整性: {results.get('completeness_score', 0)}/10")
+                console.print(f"  - 准确性: {results.get('accuracy_score', 0)}/10")
+                console.print(f"  - 综合评分: {results.get('overall_score', 0.0)}/10")
+            
             # 显示LangSmith追踪信息
             if results.get('langsmith_enabled', False):
                 langsmith_info = results.get('langsmith_info', {})

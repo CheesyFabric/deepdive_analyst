@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import requests
 from bs4 import BeautifulSoup
 from loguru import logger
+from src.utils.safe_logger import safe_log_debug
 
 try:
     from tavily import TavilyClient
@@ -67,9 +68,10 @@ class TavilySearchTool:
         try:
             if hasattr(self, '_session') and self._session:
                 self._session.close()
-                logger.debug("Tavily搜索工具会话已关闭")
+                # 使用安全的日志记录器
+                safe_log_debug("Tavily搜索工具会话已关闭")
         except Exception as e:
-            logger.debug(f"清理Tavily搜索工具时出现警告: {e}")
+            safe_log_debug(f"清理Tavily搜索工具时出现警告: {e}")
     
     def __del__(self):
         """析构函数"""
@@ -193,9 +195,10 @@ class WebScrapingTool:
         try:
             if hasattr(self, 'session') and self.session:
                 self.session.close()
-                logger.debug("网页抓取工具会话已关闭")
+                # 使用安全的日志记录器
+                safe_log_debug("网页抓取工具会话已关闭")
         except Exception as e:
-            logger.debug(f"清理网页抓取工具时出现警告: {e}")
+            safe_log_debug(f"清理网页抓取工具时出现警告: {e}")
     
     def __del__(self):
         """析构函数"""
@@ -365,9 +368,10 @@ class SearchToolsManager:
             if self.web_scraping_tool:
                 self.web_scraping_tool._cleanup()
             
-            logger.debug("搜索工具管理器资源已清理")
+            # 使用安全的日志记录器
+            safe_log_debug("搜索工具管理器资源已清理")
         except Exception as e:
-            logger.debug(f"清理搜索工具管理器时出现警告: {e}")
+            safe_log_debug(f"清理搜索工具管理器时出现警告: {e}")
     
     def __del__(self):
         """析构函数"""
